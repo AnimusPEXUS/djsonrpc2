@@ -1,0 +1,16 @@
+.dub
+docs.json
+__dummy.html
+docs/
+/djsonrpc2
+djsonrpc2.so
+djsonrpc2.dylib
+djsonrpc2.dll
+djsonrpc2.a
+djsonrpc2.lib
+djsonrpc2-test-*
+*.exe
+*.o
+*.obj
+*.lst
+*.a

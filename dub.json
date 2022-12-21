@@ -1,0 +1,13 @@
+{
+	"authors": [
+		"Animus Pexus"
+	],
+	"copyright": "Copyright © 2022, Animus Pexus",
+	"description": "A minimal D application.",
+	"license": "gplv3",
+	"name": "djsonrpc2",
+	"dependencies": {
+                "dlgo": "~>0.0.0"
+        },
+
+}
