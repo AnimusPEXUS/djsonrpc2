@@ -14,3 +14,4 @@ djsonrpc2-test-*
 *.obj
 *.lst
 *.a
+.ipynb_checkpoints

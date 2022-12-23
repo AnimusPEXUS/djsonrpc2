@@ -1,6 +1,14 @@
 module djsonrpc2.JSONRPC2Node;
 
 import std.json;
+import std.uuid;
+import std.datetime;
+
+import core.sync.mutex;
+
+import dlgo;
+
+import dutils.Worker001;
 
 import djsonrpc2.protocol;
 
@@ -23,29 +31,59 @@ class JSONRPC2Node
         // including notifications
         Response delegate(Request req) nothrow onRequest;
 
-        // called on all new notifications (requests without id)
-        void delegate(Request req) nothrow onNotification;
-
-        // JSONRPC2Node calls this on new response if no ResponseReceiver designated with
-        // sendRequest()
-        void delegate() nothrow onResponseNoReceiver;
-
-        // called on all recieved responses
-        void delegate() nothrow onResponse;
-
         // this is called when JSONRPC2Node needs to send message to other side.
         // if this delegate not specified when it's needed - this leads to exception.
         // TODO: probably add this to this() to force it's defenition
-        void delegate(string value) nothrow pushMessageToOutside;
+        gerror delegate(string value) nothrow pushMessageToOutside;
+    }
+
+    public
+    {
+        Duration defaultResponseWaitTimeout = dur!"minutes"(1);
+        // Duration maximumResponseWaitTimeout = dur!"hours"(1);
     }
 
     private
     {
         bool closed;
+        JSONRPC2NodeResponseReceiverWrapper[] respWaiters;
+        Mutex respWaiters_lock;
+        Worker001 worker;
     }
 
     this()
     {
+        respWaiters_lock = new Mutex();
+        worker = new Worker(&respWaitersTimeoutChecker);
+    }
+
+    void respWaitersTimeoutChecker(void delegate() set_starting, void delegate() set_working,
+            void delegate() set_stopping, void delegate() set_stopped, bool delegate() is_stop_flag)
+    {
+        set_starting();
+        scope (exit)
+        {
+            set_stopped();
+        }
+
+        set_working();
+        while (true)
+        {
+            if (is_stop_flag())
+            {
+                break;
+            }
+
+            if (closed)
+            {
+                break;
+            }
+
+            Thread.sleep(dur!"seconds"(1));
+        }
+        set_stopping();
+
+        close();
     }
 
     // helper function to disconnect all waiters.
@@ -57,6 +95,7 @@ class JSONRPC2Node
         // synchronized (closed)
         // {
         closed = true;
+        worker.stop();
         // }
     }
 
@@ -65,6 +104,8 @@ class JSONRPC2Node
     // 'value' must be UTF-8 plain text string with JSON in to, acceptable
     // to be parsed with std.json. this function doesn't do any cleanups or
     // preperations to 'value' before actual use.
+
+    // if onRequest not defined - this throws Exception
     void pushMessageFromOutside(string value)
     {
         // TODO: add syncronization
@@ -129,21 +170,113 @@ class JSONRPC2Node
     // req's id must be unique for JSONRPC2Node instance, keep this in mind.
 
     // Exception will be thrown if req's id isn't unique for JSONRPC2Node instance.
-    void sendRequest(Request req, JSONRPC2NodeResponseReceiver rr, bool genid = false)
+    gerror sendRequest(Request req, JSONRPC2NodeResponseReceiver rr,
+            bool genid = false, Duration timeout = dur!"minutes"(1))
     {
+        if (pushMessageToOutside is null)
+        {
+            return new gerror("pushMessageToOutside is null");
+        }
+
+        if (timeout < dur!"seconds"(0))
+        {
+            return new gerror("timeout must be not negative");
+        }
+
+        if (rr !is null && !req.haveId())
+        {
+            // TODO: maybe this should be allowd and rr should be simply ignored
+            return new gerror("rr defined, but req have no Id");
+        }
+
         auto rrw = new JSONRPC2NodeResponseReceiverWrapper();
+
         rrw.rr = rr;
+        rrw.timeout = timeout;
+
+        gerror err = storeRRW(req, rrw, genid);
+        if (err !is null)
+        {
+            return err;
+        }
+
+        auto jv = req.toJSONValue();
+        string req_json = jv.toJSON();
+        err = pushMessageToOutside(req_json);
+        return err;
+    }
+
+    private gerror storeRRW(Request req, JSONRPC2NodeResponseReceiverWrapper rrw, bool genid = false)
+    {
+        synchronized (respWaiters_lock)
+        {
+            if (genid)
+            {
+                auto id = genUniqueUUID();
+                rrw.id = id;
+                req.id(id);
+            }
+            else
+            {
+                if (isRegisteredID(req.id))
+                {
+                    return new gerror("req.id already registered");
+                }
+                rrw.id = req.id();
+            }
+            respWaiters ~= rrw;
+
+
+            synchronized
+            {
+                if (worker.getStatus() == WorkerStarus.stopped)
+                {
+                    worker.start();
+                }
+            }
+
+            return cast(gerror) null;
+        }
+    }
+
+    private bool isRegisteredID(JSONValue id)
+    {
+        if (id.type != JSONType.string)
+            return false;
+
+        foreach (x; respWaiters)
+        {
+            if (x.id == id)
+                return true;
+        }
+
+        return false;
+    }
+
+    private JSONValue genUniqueUUID()
+    {
+        JSONValue ret;
+        while (true)
+        {
+            ret = JSONValue(randomUUID().toString());
+            auto res = isRegisteredID(ret);
+            if (!res)
+                break;
+        }
+        return ret;
     }
 }
 
 private class JSONRPC2NodeResponseReceiverWrapper
 {
     JSONValue id;
+    Duration timeout;
     JSONRPC2NodeResponseReceiver rr;
 }
 
 class JSONRPC2NodeResponseReceiver
 {
-    void delegate() onClosed;
-    void delegate(Request req, Response resp) onResponsed;
+    void delegate() onNodeClose;
+    void delegate() onResponseTimeout;
+    void delegate(Request req, Response resp) onResponse;
 }

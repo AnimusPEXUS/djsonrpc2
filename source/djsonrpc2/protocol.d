@@ -132,6 +132,11 @@ class Request : Ided
         return tuple(ret, cast(gerror) null);
     }
 
+    bool isNotification()
+    {
+        return !haveId();
+    }
+
     string method()
     {
         return _method;
