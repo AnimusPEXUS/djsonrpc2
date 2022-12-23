@@ -1,8 +1,8 @@
 {
 	"fileVersion": 1,
 	"versions": {
-		"dlgo": "~master",
-		"dutils": "~master",
+		"dlgo": {"version":"~master","repository":"git+https://github.com/AnimusPEXUS/dlgo.git"},
+		"dutils": {"version":"~master","repository":"git+https://github.com/AnimusPEXUS/dutils.git"},
 		"eventcore": "0.9.21",
 		"libasync": "0.8.6",
 		"memutils": "1.0.4",
